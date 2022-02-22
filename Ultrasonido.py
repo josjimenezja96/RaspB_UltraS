@@ -1,54 +1,75 @@
-Python
-#Libraries
 import RPi.GPIO as GPIO
 import time
- 
-#GPIO Mode (BOARD / BCM)
+import statistics
+
+#### Define program constants
+trigger_pin=4    # the GPIO pin that is set to high to send an ultrasonic wave out. (output)
+echo_pin=17      # the GPIO pin that indicates a returning ultrasonic wave when it is set to high (input)
+number_of_samples=5 # this is the number of times the sensor tests the distance and then picks the middle value to return
+sample_sleep = .01  # amount of time in seconds that the system sleeps before sending another sample request to the sensor. You can try this at .05 if your measurements aren't good, or try it at 005 if you want faster sampling.
+calibration1 = 30   # the distance the sensor was calibrated at
+calibration2 = 1750 # the median value reported back from the sensor at 30 cm
+time_out = .05 # measured in seconds in case the program gets stuck in a loop
+
+#### Set up GPIO
+GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
- 
-#set GPIO Pins
-GPIO_TRIGGER = 18
-GPIO_ECHO = 24
- 
-#set GPIO direction (IN / OUT)
-GPIO.setup(GPIO_TRIGGER, GPIO.OUT)
-GPIO.setup(GPIO_ECHO, GPIO.IN)
- 
-def distance():
-    # set Trigger to HIGH
-    GPIO.output(GPIO_TRIGGER, True)
- 
-    # set Trigger after 0.01ms to LOW
-    time.sleep(0.00001)
-    GPIO.output(GPIO_TRIGGER, False)
- 
-    StartTime = time.time()
-    StopTime = time.time()
- 
-    # save StartTime
-    while GPIO.input(GPIO_ECHO) == 0:
-        StartTime = time.time()
- 
-    # save time of arrival
-    while GPIO.input(GPIO_ECHO) == 1:
-        StopTime = time.time()
- 
-    # time difference between start and arrival
-    TimeElapsed = StopTime - StartTime
-    # multiply with the sonic speed (34300 cm/s)
-    # and divide by 2, because there and back
-    distance = (TimeElapsed * 34300) / 2
- 
-    return distance
- 
-if __name__ == '__main__':
-    try:
-        while True:
-            dist = distance()
-            print ("Measured Distance = %.1f cm" % dist)
-            time.sleep(1)
- 
-        # Reset by pressing CTRL + C
-    except KeyboardInterrupt:
-        print("Measurement stopped by User")
-        GPIO.cleanup()
+
+# Set up the pins for output and input
+GPIO.setup(trigger_pin, GPIO.OUT)
+GPIO.setup(echo_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+#### initialize variables
+samples_list = [] #type: list # list of data collected from sensor which are averaged for each measurement
+stack = []
+
+
+def timer_call(channel) :
+# call back function when the rising edge is detected on the echo pin
+    now = time.monotonic()  # gets the current time with a lot of decimal places
+    stack.append(now) # stores the start and end times for the distance measurement in a LIFO stack
+
+def trigger():
+    # set our trigger high, triggering a pulse to be sent - a 1/100,000 of a second pulse or 10 microseconds
+    GPIO.output(trigger_pin, GPIO.HIGH) 
+    time.sleep(0.00001) 
+    GPIO.output(trigger_pin, GPIO.LOW)
+
+def check_distance():
+# generates an ultrasonic pulse and uses the times that are recorded on the stack to calculate the distance
+    # Empty the samples list
+    samples_list.clear()
+
+    while len(samples_list) < number_of_samples:       # Checks if the samples_list contains the required number_of_samples
+        # Tell the sensor to send out an ultrasonic pulse.
+        trigger()
+
+        # check the length of stack to see if it contains a start and end time . Wait until 2 items in the list
+        while len(stack) < 2:                          # waiting for the stack to fill with a start and end time
+            start = time.monotonic()                   # get the time that we enter this loop to track for timeout
+            while time.monotonic() < start + time_out: # check the timeout condition
+                pass
+
+            trigger()                                  # The system timed out waiting for the echo to come back. Send a new pulse.
+
+        if len(stack) == 2:                          # Stack has two elements on it.
+            # once the stack has two elements in it, store the difference in the samples_list
+            samples_list.append(stack.pop()-stack.pop())
+
+        elif len(stack) > 2:
+            # somehow we got three items on the stack, so clear the stack
+            stack.clear()
+
+        time.sleep(sample_sleep)          # Pause to make sure we don't overload the sensor with requests and allow the noise to die down
+
+    # returns the media distance calculation
+    return (statistics.median(samples_list)*1000000*calibration1/calibration2)
+
+###########################
+# Main Program
+###########################
+
+GPIO.add_event_detect(echo_pin, GPIO.BOTH, callback=timer_call)  # add rising and falling edge detection on echo_pin (input)
+
+for i in range(1000): # check the distance 100 times
+    print(round(check_distance(), 1)) # print out the distance rounded to one decimal place
