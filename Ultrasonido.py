@@ -5,7 +5,10 @@ GPIO.setmode(GPIO.BCM)
 TRIG = 23
 ECHO = 24
 
-GPIO.output(TRIG,False)
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
+
+GPIO.output(TRIG, False)
 print("Waitin For sensor to settle")
 time.sleep(2)
 
