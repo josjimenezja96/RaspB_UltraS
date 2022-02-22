@@ -29,5 +29,6 @@ def Distance():
         return distance
 
 while True:
-        Distance()
+        X = Distance()
+        print("Distance: ", X , " cm")
         time.sleep(1)
